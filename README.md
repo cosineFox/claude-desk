@@ -36,8 +36,11 @@ Need a second, independent desk? Give it its own `DESK_STATE`, `DESK_PROFILE` an
 Run `desk` with no argument for the list. Main ones: `start [WxH]`, `stop`, `status`, `doctor`, `run <cmd>`, `chromium [url]`,
 `shot [file]`, `click X Y`, `type <text>`, `key <key> [mods]`, `scroll`, `windows`, `ws N [move]`, `reload`, `watch`, `mcp`.
 
+## macOS, Windows
+No Wayland there, so use the Docker setup in [`docker/`](docker/README.md). It is untested; reports welcome.
+
 ## Requirements
-Linux with Wayland tooling. Required: `labwc`, `wlr-randr`, `wtype`, `grim`, `wlrctl`, `dbus-run-session` + `dbus-daemon`, `curl`, `coreutils`, a Chromium-family browser.
+Linux (macOS/Windows: see Docker above). Required: `labwc`, `wlr-randr`, `wtype`, `grim`, `wlrctl`, `dbus-run-session` + `dbus-daemon`, `curl`, `coreutils`, a Chromium-family browser.
 Optional: `foot` (terminal), `wayvnc` + a VNC viewer (`desk watch`), `node`/`npx` (`desk mcp`), `flock`.
 `desk doctor` checks all of this. The original script ran daily on Arch (labwc 0.20.2, Chromium 155, wlrctl 0.2.2). This packaged release has not had its first full test run yet, and other distros are untested. Needs bash 4.4+. On Ubuntu, `apt install chromium` is a snap that can't use a profile under `~/.local`; use Chrome/Chromium from another source (`DESK_CHROMIUM`). Needs labwc 0.7+ for the window rules (older versions are untested).
 

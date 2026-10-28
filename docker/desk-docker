@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# UNTESTED. Run any `desk` command inside the claude-desk container: desk-docker shot /out/a.png
+exec docker exec -u desk -e XDG_RUNTIME_DIR=/run/user/1000 claude-desk desk "$@"
