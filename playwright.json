@@ -1,0 +1,7 @@
+{
+  "browser": {
+    "launchOptions": {
+      "args": ["--ozone-platform=wayland", "--password-store=basic", "--no-first-run", "--no-default-browser-check"]
+    }
+  }
+}

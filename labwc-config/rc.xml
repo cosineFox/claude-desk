@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<!--
+  claude-desk (nested labwc). Applied live with `desk reload` (SIGHUP to the inner labwc).
+  Desktops: 1 is where Chromium lives, 2 is a terminal, 3-4 are for apps and scratch work.
+  Switch with `desk ws N`; move the focused window with `desk ws N move`.
+  Never launch apps from here (Execute / autostart): this labwc runs with a stripped PATH on
+  purpose. Use `desk run` instead.
+-->
+<labwc_config>
+  <core>
+    <gap>0</gap>
+  </core>
+
+  <desktops>
+    <!-- 0 = no "Desktop N" overlay, so switching never leaks into screenshots -->
+    <popupTime>0</popupTime>
+    <names>
+      <name>web</name>
+      <name>term</name>
+      <name>apps</name>
+      <name>scratch</name>
+    </names>
+  </desktops>
+
+  <keyboard>
+    <!-- keep labwc's built-in binds and add these -->
+    <default />
+    <keybind key="W-1"><action name="GoToDesktop" to="1" /></keybind>
+    <keybind key="W-2"><action name="GoToDesktop" to="2" /></keybind>
+    <keybind key="W-3"><action name="GoToDesktop" to="3" /></keybind>
+    <keybind key="W-4"><action name="GoToDesktop" to="4" /></keybind>
+    <keybind key="W-S-1"><action name="SendToDesktop" to="1" follow="no" /></keybind>
+    <keybind key="W-S-2"><action name="SendToDesktop" to="2" follow="no" /></keybind>
+    <keybind key="W-S-3"><action name="SendToDesktop" to="3" follow="no" /></keybind>
+    <keybind key="W-S-4"><action name="SendToDesktop" to="4" follow="no" /></keybind>
+    <keybind key="W-Up"><action name="ToggleMaximize" /></keybind>
+  </keyboard>
+
+  <windowRules>
+    <!-- Chromium opens on desktop 1, maximized -->
+    <windowRule identifier="chromium*">
+      <action name="SendToDesktop" to="1" follow="no" />
+      <action name="Maximize" />
+    </windowRule>
+    <!-- terminals open on desktop 2, maximized -->
+    <windowRule identifier="foot*">
+      <action name="SendToDesktop" to="2" follow="no" />
+      <action name="Maximize" />
+    </windowRule>
+  </windowRules>
+</labwc_config>
