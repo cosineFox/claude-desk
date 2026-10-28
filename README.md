@@ -13,6 +13,19 @@ browser, take screenshots, click and type, without touching your real screen: yo
     <that folder>/install.sh      # links ~/.local/bin/desk, runs `desk doctor`, prints the package command for your distro
     desk start && desk chromium https://example.com && desk shot
 
+## How it works
+
+![How claude-desk works](docs/how-it-works.svg)
+
+1. `desk start` launches a second labwc compositor, headless, inside your session, with its own Wayland display and D-Bus. Nothing is shown on your screen.
+2. The agent works through plain shell commands: `desk run <app>` starts a GUI app inside it, `desk shot` screenshots it (`grim`), `desk click X Y`, `desk type`, `desk key` act on it (`wlrctl`, `wtype`). Click coordinates are screenshot pixels.
+3. `desk chromium <url>` starts a browser with its own profile and a debugging port, so the agent can read page text with `cdp-eval.mjs` instead of screenshotting.
+4. There are four desktops (web, term, apps, scratch) in one shared desk. Switch with `desk ws N`, and go back to desktop 1 when done.
+5. `desk watch` streams the desk over VNC if you want to look. `desk stop` ends the desk and the apps in it.
+
+Typical loop for an agent: `desk start` → `desk chromium <url>` → `desk shot` and look → `desk click` / `desk type` → read text over CDP → `desk stop`.
+Need a second, independent desk? Give it its own `DESK_STATE`, `DESK_PROFILE` and `DESK_CDP_PORT`.
+
 ## What you get
 - Headless by default: no window, no host compositor needed (SSH and containers are untested; the headless backend may need a render node or `WLR_RENDERER=pixman`). `DESK_VISIBLE=1 desk start` shows it as a window in a Wayland host instead.
 - Apps run with a clean environment: no `DISPLAY`, a stripped `PATH` for the compositor.
