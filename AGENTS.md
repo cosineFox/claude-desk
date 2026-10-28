@@ -16,6 +16,7 @@ desktop: nothing below moves the user's pointer, steals focus, or touches their 
 1. **Platform check:** Linux with systemd-style user session (`echo $XDG_RUNTIME_DIR` is set). Note the distro from `/etc/os-release`.
 2. **Install the tool:** from this folder, run `./install.sh`. It links `desk` into `~/.local/bin` and runs `desk doctor`.
 3. **Install what's missing:** `desk doctor` lists MISSING tools. Install them with the distro's package manager (`install.sh` prints a suggested command). `wlrctl` is the hard one: on Arch it's in the AUR; on Fedora build from source (git.sr.ht/~brocellous/wlrctl); on Debian/Ubuntu try apt. Chromium: on Ubuntu `apt install chromium` is a snap that can't use a profile under `~/.local`, so get a non-snap Chromium or Chrome and set `DESK_CHROMIUM`. Re-run `desk doctor` until it passes.
+   - `labwc` must be 0.7 or newer (check with `labwc --version`). If the distro's package is older or missing, tell the user and build labwc from source (github.com/labwc/labwc) instead of continuing.
 4. **Verify:** use a throwaway state so you never disturb a desk already running:
    `export DESK_STATE=$(mktemp -d) DESK_CDP_PORT=9333 DESK_VNC_PORT=5911`
    - `desk start` prints `desk up: ...`
