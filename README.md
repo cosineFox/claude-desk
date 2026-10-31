@@ -54,6 +54,32 @@ Linux (macOS/Windows: see Docker above). Required: `labwc`, `wlr-randr`, `wtype`
 Optional: `foot` (terminal), `wayvnc` + a VNC viewer (`desk watch`), `node`/`npx` (`desk mcp`), `flock`.
 `desk doctor` checks all of this. The original script ran daily on Arch (labwc 0.20.2, Chromium 155, wlrctl 0.2.2). The packaged release passed its first full test run on Arch on 2026-10-29 (start, run, windows, shot, Chromium, watch, stop); other distros are untested. Needs bash 4.4+. On Ubuntu, `apt install chromium` is a snap that can't use a profile under `~/.local`; use Chrome/Chromium from another source (`DESK_CHROMIUM`). Needs labwc 0.7+ for the window rules (older versions are untested).
 
+## Where everything lives
+Nothing is installed system-wide and nothing needs root. Every path, with the variable that changes it:
+
+| What | Default path | Change with |
+|---|---|---|
+| Program (this repo) | `~/.local/share/claude-desk/` | wherever you clone it |
+| `desk` command (symlink) | `~/.local/bin/desk` | `DESK_BIN_DIR` (install.sh) |
+| Desk state (see below) | `~/.local/state/claude-desk/` | `DESK_STATE` (or `XDG_STATE_HOME`) |
+| Chromium profile (logins, cookies, cache) | `~/.local/share/claude-desk-chromium/` | `DESK_PROFILE` |
+| Compositor config | `<repo>/labwc-config/rc.xml` | edit, then `desk reload` |
+| Playwright MCP config | `<repo>/playwright.json` | edit |
+| Manager binary | `<repo>/manager/target/release/desk-manager` | built by `install.sh` (needs cargo) |
+| Manager screenshots (`s` key, `shot`) | the folder you run it from, `desk-window-N.png` | `desk manager shot <n> <file>` |
+| Cargo build cache | `~/.cargo/` (only while building) | |
+
+**Inside the state folder** (`~/.local/state/claude-desk/`), all created by `desk` and safe to delete when the desk is stopped:
+`pid`, `display`, `dbus` (the running desk), `inner.sh` (generated startup script), `log` (compositor), `apps.log` (apps and Chromium), `lock`, `bin/` and `no-libdecor/` (the compositor's stripped PATH and an empty libdecor plugin dir), `chromium.pid`, `last-run.pid`, `vnc.pid`, `vnc.mode`, `viewer.pid`, `shot-HHMMSS.png` (default screenshot names), and `playwright-out/` (only with `desk mcp`).
+
+**Apps you run in the desk** (`desk run blender`, foot, Krita...) use your real `$HOME`, so they read and write their normal config, cache and project files there. The desk isolates windows and input, not files.
+
+**Network:** Chromium's debugging port `127.0.0.1:9222` (`DESK_CDP_PORT`) and the VNC port `127.0.0.1:5901` (`DESK_VNC_PORT`). Both are loopback only and unauthenticated.
+
+**Runtime sockets:** the nested compositor creates its own Wayland socket in `$XDG_RUNTIME_DIR` (for example `wayland-2`). It is removed when the desk stops.
+
+**Docker** (untested): the repo is copied to `/opt/claude-desk` in the image, the profile lives in the volume `claude-desk-profile` (mounted at `/home/desk/.local/share`), and screenshots go to `./out/` on your machine.
+
 ## Configuration (environment)
 `DESK_STATE` (default `~/.local/state/claude-desk`), `DESK_PROFILE` (Chromium profile), `DESK_CDP_PORT` (9222),
 `DESK_VNC_PORT` (5901), `DESK_CHROMIUM` (browser binary), `DESK_PLAYWRIGHT_MCP` (npm package), `DESK_VISIBLE=1`.
