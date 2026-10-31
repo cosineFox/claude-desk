@@ -9,12 +9,12 @@ browser, take screenshots, click and type, without touching your real screen: yo
 
 ## Set it up with an agent (copy and paste)
 
-> Install claude-desk from https://github.com/cosineFox/claude-desk: clone it, read its AGENTS.md, and follow it to install, verify and report. Put it wherever I keep my tools (ask me if you can't tell), and tell me once what system packages you need before installing them.
+> Install claude-desk from https://github.com/cosineFox/claude-desk: clone it, read its AGENTS.md, and follow it to install, verify and report. Use ~/.local/share/claude-desk unless I say where I keep my tools, and tell me once what system packages you need before installing them.
 
 ## Set it up yourself
 
-    git clone https://github.com/cosineFox/claude-desk <wherever you keep tools>
-    <that folder>/install.sh      # links ~/.local/bin/desk, runs `desk doctor`, prints the package command for your distro
+    git clone https://github.com/cosineFox/claude-desk ~/.local/share/claude-desk
+    ~/.local/share/claude-desk/install.sh      # links ~/.local/bin/desk, runs `desk doctor`, prints the package command for your distro
     desk start && desk chromium https://example.com && desk shot
 
 ## How it works

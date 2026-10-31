@@ -10,7 +10,7 @@ desktop: nothing below moves the user's pointer, steals focus, or touches their 
 
 ## Steps
 0. **Choose where things go.** Nothing is fixed; follow the user's own layout.
-   - *Source folder:* where they keep tools/projects (look for an existing `~/tools`, `~/src`, `~/.local/share`, or what their notes/CLAUDE.md say). If you can't tell, ask once and offer your best guess. Clone (or move) the repo there, and keep it: `desk` runs from that folder.
+   - *Source folder:* default `~/.local/share/claude-desk` (everything the tool owns then lives under `~/.local`). Use a different folder only if the user named one or clearly keeps tools elsewhere (an existing `~/tools`, `~/src`, or what their notes say); never ask just to confirm the default. Clone (or move) the repo there and keep it: `desk` runs from that folder.
    - *Command link:* `install.sh` links `desk` into `~/.local/bin`. Set `DESK_BIN_DIR` for another PATH directory.
    - *State and browser profile:* default `~/.local/state/claude-desk` and `~/.local/share/claude-desk-chromium`; override with `DESK_STATE` / `DESK_PROFILE` if the user wants them elsewhere (add to their shell profile only if they agree).
 1. **Platform check:** if this is macOS or Windows, follow `docker/README.md` instead (untested, tell the user). Otherwise: Linux with systemd-style user session (`echo $XDG_RUNTIME_DIR` is set). Note the distro from `/etc/os-release`.
