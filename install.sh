@@ -21,6 +21,12 @@ case "${ID:-}${ID_LIKE:-}" in
 esac
 echo; echo "Checking tools:"
 if "$dest" doctor; then echo; echo "All required tools found."; else echo; echo "Install the missing ones (package names may differ):"; echo "  $cmd"; fi
-command -v cargo >/dev/null && echo "optional desk manager: (cd $here/manager && cargo build --release)" || echo "optional desk manager needs cargo (rust) to build"
+if command -v cargo >/dev/null; then
+  echo "building desk manager (cargo)..."
+  if (cd "$here/manager" && cargo build --release -q 2>&1 | tail -3); then
+    (cd "$here/manager/target" && rm -rf debug release/deps release/build release/incremental release/.fingerprint release/examples release/*.d)
+    echo "built manager/target/release/desk-manager"
+  else echo "manager build failed (optional)"; fi
+else echo "optional desk manager needs cargo (rust) to build; skipping"; fi
 echo; echo "Next: desk start && desk chromium https://example.com && desk shot"
 echo "Claude Code MCP (optional): claude mcp add playwright -s user -- $dest mcp"

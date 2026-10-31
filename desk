@@ -24,7 +24,7 @@
 #   desk mcp                  stdio Playwright MCP server (what `claude mcp add` runs): starts the desk if
 #                             needed; Playwright launches Chromium inside it on the first browser tool call
 #   desk doctor               check that every needed tool is installed (read-only)
-#   desk manager [list|shot|ws|resize]  terminal manager (run it in foot): window list with live previews; subcommands for scripts
+#   desk manager [here|list|shot|view|ws|resize]  opens the terminal manager in a foot window (DESK_TERMINAL to change); `here` runs it in this terminal; the rest are for scripts
 #   desk resize WxH           change the desk's resolution live (open apps re-fit; screenshot pixels change)
 #   desk view [N] [control]   look at the desk: optionally go to desktop N first, then open a VNC viewer (view-only unless "control")
 set -u
@@ -139,7 +139,15 @@ ws)
 manager)
   need; MB=$(find_bin desk-manager); [ -n "$MB" ] || MB=$D/manager/target/release/desk-manager
   [ -x "$MB" ] || die "desk-manager is not built (needs cargo: cd $D/manager && cargo build --release)"
-  shift; DESK_STATE=$S DESK_BIN=$0 exec "$MB" "$@" ;;
+  shift
+  case "${1:-}" in
+  ""|tui)  # open the manager in its own terminal window (foot by default) on the current session
+    TERMCMD=${DESK_TERMINAL:-foot}; req TERMB "$TERMCMD"; req SETSID setsid
+    DESK_STATE=$S DESK_BIN=$0 "$SETSID" "$TERMB" -T "desk manager" -e "$MB" >/dev/null 2>&1 < /dev/null &
+    echo "desk manager opened in $TERMCMD" ;;
+  here) shift; DESK_STATE=$S DESK_BIN=$0 exec "$MB" "$@" ;;      # run in this terminal
+  *) DESK_STATE=$S DESK_BIN=$0 exec "$MB" "$@" ;;                # list, shot, view, ws, resize
+  esac ;;
 resize)
   need; req WLRRANDR wlr-randr; SZ=${2:?size like 1280x720}; [[ $SZ =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]] || die "size must look like 1600x900"
   OUTN=$(denv "$WLRRANDR" | head -1 | cut -d' ' -f1)
