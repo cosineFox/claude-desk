@@ -233,6 +233,7 @@ fn tui() -> Result<(), String> {
     let (mut last_list, mut last_prev) = (Instant::now() - Duration::from_secs(9), Instant::now() - Duration::from_secs(9));
     let mut dirty = true;
     let mut whole = false;
+    let mut last_size = (0usize, 0usize, 0usize, 0usize);
     let mut prev_id = String::new();
     let result = loop {
         if last_list.elapsed() > Duration::from_secs(2) {
@@ -246,6 +247,7 @@ fn tui() -> Result<(), String> {
             last_list = Instant::now();
         }
         let (cols, rows, xp, yp) = term_size();
+        if (cols, rows, xp, yp) != last_size { last_size = (cols, rows, xp, yp); dirty = true; } // window resized: redraw at once
         let split = (rows / 2).max(6); // rows 2..split-1: preview; split..: list
         if dirty {
             let mut s = String::from("\x1b[2J\x1b[H");
@@ -281,7 +283,7 @@ fn tui() -> Result<(), String> {
             }
             prev_id = id; last_prev = Instant::now();
         }
-        match rx.recv_timeout(Duration::from_millis(250)) {
+        match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(k) => {
                 if let Some(buf) = input.as_mut() {
                     for &c in &k {
