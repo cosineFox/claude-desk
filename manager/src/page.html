@@ -1,0 +1,37 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>desk manager</title>
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#1f2328;--mu:#59636e;--bd:#d1d9e0;--ac:#0969da}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mu:#9198a1;--bd:#3d444d;--ac:#4493f8}}
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--bd)}
+h1{font-size:15px;margin:0 8px 0 0}button,input{font:inherit;color:inherit;background:none;border:1px solid var(--bd);border-radius:6px;padding:4px 10px}
+button:hover{border-color:var(--ac)}input{width:96px}.sp{flex:1}.mu{color:var(--mu)}
+main{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:16px}
+.c{border:1px solid var(--bd);border-radius:8px;overflow:hidden;cursor:pointer}.c:hover{border-color:var(--ac)}
+.c img{display:block;width:100%;aspect-ratio:16/10;object-fit:contain;background:#000}
+.c div{padding:6px 10px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#big{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center}
+#big img{max-width:96vw;max-height:94vh}#msg{padding:0 16px}
+</style>
+<header><h1>desk manager</h1>
+<span class=mu>desktop</span><button onclick=ws(1)>1 web</button><button onclick=ws(2)>2 term</button><button onclick=ws(3)>3 apps</button><button onclick=ws(4)>4 scratch</button>
+<span class=sp></span><input id=sz placeholder=1600x900><button onclick=rs()>resize</button><button onclick=sc()>whole desk</button></header>
+<div id=msg class=mu></div><main id=g></main><div id=big onclick="this.style.display='none';cur=null"><img id=bi></div>
+<script>
+const H={'X-Desk':'1'};let cur=null,wins=[];
+const msg=t=>document.getElementById('msg').textContent=t||'';
+async function post(u){const r=await fetch(u,{method:'POST',headers:H});msg(await r.text())}
+const ws=n=>post('/api/ws?n='+n),rs=()=>post('/api/resize?size='+encodeURIComponent(sz.value));
+function sc(){cur='screen';show()}
+function show(){const u=cur==='screen'?'/screen.png':'/window.png?id='+encodeURIComponent(cur);
+ bi.src=u+(u.includes('?')?'&':'?')+Date.now();big.style.display='flex'}
+async function list(){try{const r=await fetch('/api/windows');if(!r.ok)throw await r.text();wins=await r.json();msg(wins.length?'':'no windows');
+ const ids=wins.map(w=>w.id).join();if(ids!==list.ids){list.ids=ids;g.innerHTML='';for(const w of wins){const c=document.createElement('div');c.className='c';
+  c.onclick=()=>{cur=w.id;show()};c.innerHTML='<img alt=""><div></div>';c.querySelector('div').textContent=w.app+' - '+w.title;c.dataset.id=w.id;g.append(c)}}
+ else wins.forEach((w,i)=>g.children[i].querySelector('div').textContent=w.app+' - '+w.title)}catch(e){msg(String(e))}}
+function tick(){for(const c of g.children){const i=c.querySelector('img');if(i.dataset.b)continue;i.dataset.b=1;
+  const n=new Image();n.onload=()=>{i.src=n.src;i.dataset.b=''};n.onerror=()=>{i.dataset.b=''};n.src='/window.png?id='+encodeURIComponent(c.dataset.id)+'&t='+Date.now()}
+ if(cur)show()}
+list();setInterval(list,3000);setInterval(tick,1500);
+</script>

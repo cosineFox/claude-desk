@@ -1,0 +1,17 @@
+[package]
+name = "desk-manager"
+version = "0.1.0"
+edition = "2021"
+description = "Tiny local web viewer for claude-desk: live thumbnails of every window, resize, desktop switch"
+license = "MIT"
+
+[dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

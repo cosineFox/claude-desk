@@ -21,5 +21,6 @@ case "${ID:-}${ID_LIKE:-}" in
 esac
 echo; echo "Checking tools:"
 if "$dest" doctor; then echo; echo "All required tools found."; else echo; echo "Install the missing ones (package names may differ):"; echo "  $cmd"; fi
+command -v cargo >/dev/null && echo "optional desk manager: (cd $here/manager && cargo build --release)" || echo "optional desk manager needs cargo (rust) to build"
 echo; echo "Next: desk start && desk chromium https://example.com && desk shot"
 echo "Claude Code MCP (optional): claude mcp add playwright -s user -- $dest mcp"
