@@ -24,7 +24,7 @@
 #   desk mcp                  stdio Playwright MCP server (what `claude mcp add` runs): starts the desk if
 #                             needed; Playwright launches Chromium inside it on the first browser tool call
 #   desk doctor               check that every needed tool is installed (read-only)
-#   desk manager [stop]       start (or stop) the desk manager: a tiny local web page with a live thumbnail of every window
+#   desk manager [list|shot|ws|resize]  terminal manager (run it in foot): window list with live previews; subcommands for scripts
 #   desk resize WxH           change the desk's resolution live (open apps re-fit; screenshot pixels change)
 #   desk view [N] [control]   look at the desk: optionally go to desktop N first, then open a VNC viewer (view-only unless "control")
 set -u
@@ -138,14 +138,8 @@ ws)
   if [ "${3:-}" = move ]; then "$0" key "$N" logo shift; else "$0" key "$N" logo; fi ;;
 manager)
   need; MB=$(find_bin desk-manager); [ -n "$MB" ] || MB=$D/manager/target/release/desk-manager
-  MPORT=${DESK_MANAGER_PORT:-5920}
-  if [ "${2:-}" = stop ]; then [ -f "$S/manager.pid" ] && kill "$(cat "$S/manager.pid")" 2>/dev/null; rm -f "$S/manager.pid"; echo "manager stopped"; exit 0; fi
   [ -x "$MB" ] || die "desk-manager is not built (needs cargo: cd $D/manager && cargo build --release)"
-  if [ -f "$S/manager.pid" ] && kill -0 "$(cat "$S/manager.pid")" 2>/dev/null; then echo "manager already up: http://127.0.0.1:$MPORT"; exit 0; fi
-  req SETSID setsid; req BASHB bash
-  DESK_STATE=$S DESK_BIN=$0 DESK_MANAGER_PORT=$MPORT XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR PATH=$APP_PATH \
-    "$SETSID" "$BASHB" -c 'echo $$ > "$1"; shift; exec "$@"' _ "$S/manager.pid" "$MB" >> "$S/manager.log" 2>&1 < /dev/null &
-  sleep 0.5; echo "manager: http://127.0.0.1:$MPORT (open it in a browser)" ;;
+  shift; DESK_STATE=$S DESK_BIN=$0 exec "$MB" "$@" ;;
 resize)
   need; req WLRRANDR wlr-randr; SZ=${2:?size like 1280x720}; [[ $SZ =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]] || die "size must look like 1600x900"
   OUTN=$(denv "$WLRRANDR" | head -1 | cut -d' ' -f1)

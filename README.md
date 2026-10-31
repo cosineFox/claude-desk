@@ -26,9 +26,11 @@ browser, take screenshots, click and type, without touching your real screen: yo
 Typical loop for an agent: `desk start` → `desk chromium <url>` → `desk shot` and look → `desk click` / `desk type` → read text over CDP → `desk stop`.
 Need a second, independent desk? Give it its own `DESK_STATE`, `DESK_PROFILE` and `DESK_CDP_PORT`.
 
-## Desk manager (see every window)
-`desk manager` starts a tiny local web page (default http://127.0.0.1:5920) with a live thumbnail of every window in the desk, even windows on other desktops. Click one to enlarge it, switch desktops, or resize the desk. Stop it with `desk manager stop`.
-It is a ~0.5 MB Rust binary with no async runtime and no web framework, loopback-only, and it needs `cargo` once to build: `cd manager && cargo build --release`. Windows are captured with `grim -T`, so it needs a compositor with ext-foreign-toplevel (labwc 0.20 works; other versions untested).
+## Desk manager (terminal app, like btop)
+`desk manager` opens a full-screen terminal app: a list of every window in the desk (even on other desktops) with a live preview of the selected one. Keys: `j`/`k` or arrows to select, `1`-`4` switch desktop, `r` resize the desk, `s` save the window as a PNG, `q` quit.
+Previews are sharp sixel images in terminals that support it (foot does) and colored half-blocks elsewhere (Alacritty, kitty, ...). Force one with `DESK_PREVIEW=sixel|blocks|none`.
+Scriptable too: `desk manager list`, `desk manager shot <n|id> [file.png]`, `desk manager ws N`, `desk manager resize WxH`.
+It's a ~0.65 MB Rust binary (wayland-client, png), no async runtime. Build it once with `cargo build --release` in `manager/`. Window capture uses `grim -T`, which needs a compositor with ext-foreign-toplevel (labwc 0.20 works; other versions untested).
 
 ## What you get
 - Headless by default: no window, no host compositor needed (SSH and containers are untested; the headless backend may need a render node or `WLR_RENDERER=pixman`). `DESK_VISIBLE=1 desk start` shows it as a window in a Wayland host instead.
