@@ -1,5 +1,9 @@
 # claude-desk
 
+<a href="https://ko-fi.com/cosinefox"><img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" height="36" alt="Support me on Ko-fi"></a>
+
+> **Status:** tested on Arch Linux with labwc 0.20. Other distros, macOS/Windows (Docker), `desk mcp`, `watch control` and the manager's half-block fallback are untested; test reports welcome.
+
 A private nested desktop for AI agents. The agent gets its own labwc (Wayland) session where it can run GUI apps and a
 browser, take screenshots, click and type, without touching your real screen: your pointer, focus and windows stay yours.
 
@@ -48,7 +52,7 @@ No Wayland there, so use the Docker setup in [`docker/`](docker/README.md). It i
 ## Requirements
 Linux (macOS/Windows: see Docker above). Required: `labwc`, `wlr-randr`, `wtype`, `grim`, `wlrctl`, `dbus-run-session` + `dbus-daemon`, `curl`, `coreutils`, a Chromium-family browser.
 Optional: `foot` (terminal), `wayvnc` + a VNC viewer (`desk watch`), `node`/`npx` (`desk mcp`), `flock`.
-`desk doctor` checks all of this. The original script ran daily on Arch (labwc 0.20.2, Chromium 155, wlrctl 0.2.2). This packaged release has not had its first full test run yet, and other distros are untested. Needs bash 4.4+. On Ubuntu, `apt install chromium` is a snap that can't use a profile under `~/.local`; use Chrome/Chromium from another source (`DESK_CHROMIUM`). Needs labwc 0.7+ for the window rules (older versions are untested).
+`desk doctor` checks all of this. The original script ran daily on Arch (labwc 0.20.2, Chromium 155, wlrctl 0.2.2). The packaged release passed its first full test run on Arch on 2026-10-29 (start, run, windows, shot, Chromium, watch, stop); other distros are untested. Needs bash 4.4+. On Ubuntu, `apt install chromium` is a snap that can't use a profile under `~/.local`; use Chrome/Chromium from another source (`DESK_CHROMIUM`). Needs labwc 0.7+ for the window rules (older versions are untested).
 
 ## Configuration (environment)
 `DESK_STATE` (default `~/.local/state/claude-desk`), `DESK_PROFILE` (Chromium profile), `DESK_CDP_PORT` (9222),
