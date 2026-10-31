@@ -27,9 +27,9 @@ Typical loop for an agent: `desk start` → `desk chromium <url>` → `desk shot
 Need a second, independent desk? Give it its own `DESK_STATE`, `DESK_PROFILE` and `DESK_CDP_PORT`.
 
 ## Desk manager (terminal app, like btop)
-`desk manager` opens a full-screen terminal app: a list of every window in the desk (even on other desktops) with a live preview of the selected one. Keys: `j`/`k` or arrows to select, `1`-`4` switch desktop, `r` resize the desk, `s` save the window as a PNG, `q` quit.
+`desk manager` opens a full-screen terminal app: a list of every window in the desk (even on other desktops) with a live preview of the selected one. Keys: `j`/`k` or arrows to select, `Enter` view the selected window (focuses it, which switches the desk to its desktop, then opens the VNC viewer, view-only), `c` same with control, `1`-`4` switch desktop, `r` resize the desk, `s` save the window as a PNG, `q` quit.
 Previews are sharp sixel images in terminals that support it (foot does) and colored half-blocks elsewhere (Alacritty, kitty, ...). Force one with `DESK_PREVIEW=sixel|blocks|none`.
-Scriptable too: `desk manager list`, `desk manager shot <n|id> [file.png]`, `desk manager ws N`, `desk manager resize WxH`.
+Scriptable too: `desk manager list`, `desk manager shot <n|id> [file.png]`, `desk manager view <n|id> [control]`, `desk manager ws N`, `desk manager resize WxH`.
 It's a ~0.65 MB Rust binary (wayland-client, png), no async runtime. Build it once with `cargo build --release` in `manager/`. Window capture uses `grim -T`, which needs a compositor with ext-foreign-toplevel (labwc 0.20 works; other versions untested).
 
 ## What you get

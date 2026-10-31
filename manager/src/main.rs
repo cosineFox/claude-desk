@@ -93,6 +93,17 @@ fn grim(display: &str, id: Option<&str>) -> Result<Vec<u8>, String> {
     if o.status.success() && !o.stdout.is_empty() { Ok(o.stdout) } else { Err("capture failed".into()) }
 }
 
+/// Focus a window in the desk (labwc switches to its desktop), then open the VNC viewer on the desk.
+fn view_window(display: &str, w: &Win, control: bool) -> Result<String, String> {
+    let wlrctl = std::env::var("WLRCTL").unwrap_or_else(|_| "wlrctl".into());
+    let o = Command::new(wlrctl).args(["toplevel", "focus", &format!("app_id:{}", w.app), &format!("title:{}", w.title)])
+        .env_remove("DISPLAY").env("WAYLAND_DISPLAY", display).output().map_err(|e| e.to_string())?;
+    if !o.status.success() { return Err(format!("focus failed: {}", String::from_utf8_lossy(&o.stderr).trim())); }
+    let mode = std::env::var("DESK_WATCH_MODE").unwrap_or_default(); // tests: nowindow
+    let args: Vec<&str> = if !mode.is_empty() { vec!["watch", &mode] } else if control { vec!["watch", "control"] } else { vec!["watch"] };
+    desk_cmd(&args)
+}
+
 struct Img { w: usize, h: usize, px: Vec<u8> } // RGB
 
 fn decode(png_bytes: &[u8]) -> Result<Img, String> {
@@ -242,7 +253,7 @@ fn tui() -> Result<(), String> {
                 if i == sel { s.push_str(&format!("\x1b[7m {:>1} {:<w$}\x1b[0m\r\n", i + 1, line, w = lw - 4)); }
                 else { s.push_str(&format!(" {:>1} {}\r\n", i + 1, line)); }
             }
-            s.push_str(&format!("\x1b[{};1H\x1b[2m j/k select  1-4 desktop  r resize  s save png  q quit\x1b[0m", rows - 1));
+            s.push_str(&format!("\x1b[{};1H\x1b[2m j/k select  enter view (VNC)  c control  1-4 desktop  r resize  s save  q quit\x1b[0m", rows - 1));
             if let Some(i) = &input { s.push_str(&format!("\x1b[{};1H resize WxH: {}_", rows, i)); } else { s.push_str(&format!("\x1b[{};1H {}", rows, clip(&msg, cols - 2))); }
             let _ = out.write_all(s.as_bytes()); let _ = out.flush();
             dirty = false; prev_id.clear();
@@ -284,6 +295,9 @@ fn tui() -> Result<(), String> {
                     b'j' if sel + 1 < wins.len() => { sel += 1; dirty = true; }
                     b'k' if sel > 0 => { sel -= 1; dirty = true; }
                     b'1'..=b'4' => { let n = (key as char).to_string(); msg = desk_cmd(&["ws", &n]).map(|_| format!("desktop {n}")).unwrap_or_else(|e| e); dirty = true; }
+                    b'\r' | b'v' | b'c' => if let Some(w) = wins.get(sel) {
+                        msg = view_window(&display, w, key == b'c').unwrap_or_else(|e| e); dirty = true;
+                    },
                     b'r' => { input = Some(String::new()); dirty = true; }
                     b's' => if let Some(id) = &cur {
                         let f = format!("desk-window-{}.png", sel + 1);
@@ -322,8 +336,14 @@ fn main() {
             std::fs::write(&f, grim(&display, Some(&w.id))?).map_err(|e| e.to_string())?;
             println!("{f}"); Ok(())
         }
+        Some("view") => {
+            let display = desk_display()?;
+            let wins = list_windows(&display)?;
+            let w = pick(&wins, args.get(1).ok_or("usage: desk-manager view <n|id> [control]")?).ok_or("no such window")?;
+            println!("{}", view_window(&display, w, args.get(2).map(String::as_str) == Some("control"))?); Ok(())
+        }
         Some("ws") | Some("resize") => { println!("{}", desk_cmd(&args.iter().map(String::as_str).collect::<Vec<_>>())?); Ok(()) }
-        _ => { println!("desk-manager [tui]            interactive manager (default in a terminal)\ndesk-manager list             windows: n, app, title, id\ndesk-manager shot <n|id> [f]  save one window as PNG\ndesk-manager ws N             go to desktop N\ndesk-manager resize WxH       resize the desk\nenv: DESK_PREVIEW=sixel|blocks|none (default: sixel in foot, else blocks)"); Ok(()) }
+        _ => { println!("desk-manager [tui]            interactive manager (default in a terminal)\ndesk-manager list             windows: n, app, title, id\ndesk-manager shot <n|id> [f]  save one window as PNG\ndesk-manager view <n|id> [control]  focus a window, then open the VNC viewer\ndesk-manager ws N             go to desktop N\ndesk-manager resize WxH       resize the desk\nenv: DESK_PREVIEW=sixel|blocks|none (default: sixel in foot, else blocks)"); Ok(()) }
     })();
     if let Err(e) = r { eprintln!("desk-manager: {e}"); std::process::exit(1); }
 }
