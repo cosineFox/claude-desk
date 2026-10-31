@@ -118,8 +118,9 @@ fn decode(png_bytes: &[u8]) -> Result<Img, String> {
 }
 
 /// Box-average downscale to fit inside (mw, mh), keeping aspect. Never upscales.
-fn fit(img: &Img, mw: usize, mh: usize) -> Img {
-    let sc = (mw as f64 / img.w as f64).min(mh as f64 / img.h as f64).min(1.0);
+fn fit(img: &Img, mw: usize, mh: usize, upscale: bool) -> Img {
+    let sc = (mw as f64 / img.w as f64).min(mh as f64 / img.h as f64);
+    let sc = if upscale { sc.min(3.0) } else { sc.min(1.0) };
     let (tw, th) = (((img.w as f64 * sc) as usize).max(1), ((img.h as f64 * sc) as usize).max(1));
     let mut px = vec![0u8; tw * th * 3];
     for y in 0..th {
@@ -231,6 +232,7 @@ fn tui() -> Result<(), String> {
     let (mut wins, mut sel, mut msg, mut input): (Vec<Win>, usize, String, Option<String>) = (vec![], 0, String::new(), None);
     let (mut last_list, mut last_prev) = (Instant::now() - Duration::from_secs(9), Instant::now() - Duration::from_secs(9));
     let mut dirty = true;
+    let mut whole = false;
     let mut prev_id = String::new();
     let result = loop {
         if last_list.elapsed() > Duration::from_secs(2) {
@@ -244,32 +246,36 @@ fn tui() -> Result<(), String> {
             last_list = Instant::now();
         }
         let (cols, rows, xp, yp) = term_size();
-        let lw = (cols / 3).clamp(24, 40).min(cols.saturating_sub(10));
+        let split = (rows / 2).max(6); // rows 2..split-1: preview; split..: list
         if dirty {
             let mut s = String::from("\x1b[2J\x1b[H");
-            s.push_str(&format!("\x1b[1m desk manager\x1b[0m  {} window(s)\r\n", wins.len()));
-            for (i, w) in wins.iter().enumerate().take(rows.saturating_sub(5)) {
-                let line = clip(&format!("{} {}", w.app, w.title), lw - 4);
-                if i == sel { s.push_str(&format!("\x1b[7m {:>1} {:<w$}\x1b[0m\r\n", i + 1, line, w = lw - 4)); }
-                else { s.push_str(&format!(" {:>1} {}\r\n", i + 1, line)); }
+            s.push_str(&format!("\x1b[1m desk manager\x1b[0m  {} window(s)  \x1b[2m[{}]\x1b[0m", wins.len(), if whole { "whole desk" } else { "selected window" }));
+            s.push_str(&format!("\x1b[{};1H\x1b[2m{}\x1b[0m", split, "\u{2500}".repeat(cols)));
+            s.push_str(&format!("\x1b[{};1H\x1b[1m windows\x1b[0m", split + 1));
+            for (i, w) in wins.iter().enumerate().take(rows.saturating_sub(split + 4)) {
+                let line = clip(&format!("{:<10} {}", clip(&w.app, 10), w.title), cols.saturating_sub(6));
+                s.push_str(&format!("\x1b[{};1H", split + 2 + i));
+                if i == sel { s.push_str(&format!("\x1b[7m {:>2} {:<w$}\x1b[0m", i + 1, line, w = cols.saturating_sub(5))); }
+                else { s.push_str(&format!(" {:>2} {}", i + 1, line)); }
             }
-            s.push_str(&format!("\x1b[{};1H\x1b[2m j/k select  enter view (VNC)  c control  1-4 desktop  r resize  s save  q quit\x1b[0m", rows - 1));
+            s.push_str(&format!("\x1b[{};1H\x1b[2m j/k select  enter view (VNC)  c control  tab window/desk  1-4 desktop  r resize  s save  q quit\x1b[0m", rows - 1));
             if let Some(i) = &input { s.push_str(&format!("\x1b[{};1H resize WxH: {}_", rows, i)); } else { s.push_str(&format!("\x1b[{};1H {}", rows, clip(&msg, cols - 2))); }
             let _ = out.write_all(s.as_bytes()); let _ = out.flush();
             dirty = false; prev_id.clear();
         }
-        let cur = wins.get(sel).map(|w| w.id.clone());
+        let cur = if whole { Some(String::from("")) } else { wins.get(sel).map(|w| w.id.clone()) };
         if mode != Mode::None && input.is_none() && cur.is_some() && (last_prev.elapsed() > Duration::from_millis(800) || cur.as_deref() != Some(&prev_id)) {
             let id = cur.clone().unwrap();
-            if let Ok(img) = grim(&display, Some(&id)).and_then(|b| decode(&b)) {
-                let (pc, pr) = (cols.saturating_sub(lw + 3), rows.saturating_sub(4));
+            if let Ok(img) = grim(&display, if whole { None } else { Some(&id) }).and_then(|b| decode(&b)) {
+                let (pc, pr) = (cols.saturating_sub(2), split.saturating_sub(3));
                 let (cw, ch) = if xp > 0 && yp > 0 { (xp / cols, yp / rows) } else { (8, 16) };
                 let s = if mode == Mode::Sixel {
-                    let small = fit(&img, pc * cw, pr * ch);
-                    format!("\x1b[3;{}H{}", lw + 3, sixel(&small))
+                    let small = fit(&img, pc * cw, pr * ch, true);
+                    let left = 2 + pc.saturating_sub(small.w / cw) / 2;
+                    format!("\x1b[2;{}H{}", left, sixel(&small))
                 } else {
-                    let small = fit(&img, pc, pr * 2);
-                    halfblocks(&small, 3, lw + 3)
+                    let small = fit(&img, pc, pr * 2, true);
+                    halfblocks(&small, 2, 2 + pc.saturating_sub(small.w) / 2)
                 };
                 let _ = out.write_all(s.as_bytes()); let _ = out.flush();
             }
@@ -298,6 +304,7 @@ fn tui() -> Result<(), String> {
                     b'\r' | b'v' | b'c' => if let Some(w) = wins.get(sel) {
                         msg = view_window(&display, w, key == b'c').unwrap_or_else(|e| e); dirty = true;
                     },
+                    b'\t' => { whole = !whole; dirty = true; }
                     b'r' => { input = Some(String::new()); dirty = true; }
                     b's' => if let Some(id) = &cur {
                         let f = format!("desk-window-{}.png", sel + 1);
