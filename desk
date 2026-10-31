@@ -24,6 +24,8 @@
 #   desk mcp                  stdio Playwright MCP server (what `claude mcp add` runs): starts the desk if
 #                             needed; Playwright launches Chromium inside it on the first browser tool call
 #   desk doctor               check that every needed tool is installed (read-only)
+#   desk resize WxH           change the desk's resolution live (open apps re-fit; screenshot pixels change)
+#   desk view [N] [control]   look at the desk: optionally go to desktop N first, then open a VNC viewer (view-only unless "control")
 set -u
 D=$(dirname "$(readlink -f "$0")")                                    # install dir (rc.xml, playwright.json)
 S=${DESK_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-desk}    # state of the running desk
@@ -133,6 +135,15 @@ type)
 ws)
   need; N=${2:?desktop number 1-4}; case "$N" in [1-4]) ;; *) die "desktop must be 1-4" ;; esac
   if [ "${3:-}" = move ]; then "$0" key "$N" logo shift; else "$0" key "$N" logo; fi ;;
+resize)
+  need; req WLRRANDR wlr-randr; SZ=${2:?size like 1280x720}; [[ $SZ =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]] || die "size must look like 1600x900"
+  OUTN=$(denv "$WLRRANDR" | head -1 | cut -d' ' -f1)
+  denv "$WLRRANDR" --output "$OUTN" --custom-mode "$SZ" && echo "desk is now $SZ (re-check coordinates with desk shot)" ;;
+view)
+  need; N=${2:-}; case "$N" in ""|[1-4]) ;; control) MODE_ARG=control; N= ;; *) die "usage: desk view [1-4] [control]" ;; esac
+  [ -n "$N" ] && "$0" ws "$N"
+  [ "${3:-}" = control ] && MODE_ARG=control
+  exec "$0" watch ${MODE_ARG:-} ;;
 reload)
   need; LPID=$(pgrep -P "$(cat "$S/pid")" -x labwc || pgrep -f "labwc -C $D/labwc-config" | head -1)
   [ -n "$LPID" ] || die "inner labwc not found"; kill -HUP "$LPID" && echo "reloaded labwc pid $LPID" ;;
@@ -185,6 +196,6 @@ mcp)
     DBUS_SESSION_BUS_ADDRESS="$(cat "$S/dbus")" PATH="$(dirname "$NPX"):$APP_PATH" LANG="${LANG:-C.UTF-8}" XDG_SESSION_TYPE=wayland \
     "$NPX" -y "$PW_MCP" --config "$D/playwright.json" --executable-path "$CHROME" \
     --output-dir "$S/playwright-out" "${PROF[@]}" ;;
-""|-h|--help|help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
-*) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' >&2; die "unknown command: $1" ;;
+""|-h|--help|help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' >&2; die "unknown command: $1" ;;
 esac
