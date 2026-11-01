@@ -50,6 +50,8 @@ Run `desk` with no argument for the list. Main ones: `start [WxH]`, `stop`, `sta
 No Wayland there, so use the Docker setup in [`docker/`](docker/README.md). It is untested; reports welcome.
 
 ## Requirements
+Optional `vkey/` (small C helper, `cc -O2 -o vkey vkey.c vk.c -lwayland-client -lxkbcommon`; `install.sh` builds it): `desk key`/`desk type` use it when built so keystrokes reach XWayland apps (e.g. Blender via `desk run --x11`); without it they use `wtype`, which native Wayland apps accept but XWayland apps misread.
+
 Linux (macOS/Windows: see Docker above). Required: `labwc`, `wlr-randr`, `wtype`, `grim`, `wlrctl`, `dbus-run-session` + `dbus-daemon`, `curl`, `coreutils`, a Chromium-family browser.
 Optional: `foot` (terminal), `wayvnc` + a VNC viewer (`desk watch`), `node`/`npx` (`desk mcp`), `flock`.
 `desk doctor` checks all of this. The original script ran daily on Arch (labwc 0.20.2, Chromium 155, wlrctl 0.2.2). The packaged release passed its first full test run on Arch on 2026-10-29 (start, run, windows, shot, Chromium, watch, stop); other distros are untested. Needs bash 4.4+. On Ubuntu, `apt install chromium` is a snap that can't use a profile under `~/.local`; use Chrome/Chromium from another source (`DESK_CHROMIUM`). Needs labwc 0.7+ for the window rules (older versions are untested).

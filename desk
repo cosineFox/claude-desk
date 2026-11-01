@@ -8,16 +8,22 @@
 #   desk start [WxH]          start the desk (default 1600x900)
 #   desk stop                 kill the desk and everything in it
 #   desk status               running? which nested display?
+#   desk displays             list display 1 and every extra display (d2, d3, ...): running/stopped, WAYLAND_DISPLAY, X11, pid
 #   desk watch [control|nowindow]  view the desk live over VNC (view-only unless "control"); needs wayvnc + a VNC viewer
 #   desk unwatch              close the viewer and wayvnc
 #   desk watchwin <id> [control]  view ONE window by its desk-manager id, whatever is focused or on screen;
 #                             needs wayvnc-toplevel (wayvnc with a working -T); own port 5902+, one per window
 #   desk unwatchwin <id|all>  close that window's viewer and wayvnc
-#   desk run <cmd...>         launch an app inside the desk (detached)
+#   desk run [--x11] <cmd...> launch an app inside the desk (detached). --x11 (or DESK_X11=1): run it on the desk's
+#                             own XWayland (DISPLAY set, no WAYLAND_DISPLAY), e.g. for Blender, where wtype keys crash
+#                             the native Wayland build. Never uses the host's X display.
+#   desk run --own [--x11] <cmd...>   ONE APP, ONE DISPLAY: claim the first free extra display (2, 3, ...), start it
+#                             (DESK_SIZE, default 1600x900), run the app there, print "display N: ...". Then drive it
+#                             with `desk key --display N Return`, `desk shot --display N`, ... so keys can only hit it.
 #   desk chromium [url]       Chromium inside the desk, CDP on 127.0.0.1:9222, own profile
 #   desk shot [out.png]       screenshot of the desk (prints the path)
-#   desk type <text>          type text into the focused desk window
-#   desk key <key> [mods]     press a key, e.g. "desk key Return", "desk key l ctrl"
+#   desk type <text>          type text into the focused desk window (via vkey when built and the text is ASCII, else wtype)
+#   desk key <key> [mods]     press a key, e.g. "desk key Return", "desk key l ctrl" (mods: ctrl alt shift logo)
 #   desk click X Y [left|right|middle]   click at desk pixel X,Y
 #   desk move X Y             move the desk pointer to X,Y
 #   desk scroll DY [DX]       scroll (positive DY = down)
@@ -30,15 +36,35 @@
 #   desk manager [here|list|shot|view|ws|resize]  opens the terminal manager in a foot window (DESK_TERMINAL to change); `here` runs it in this terminal; the rest are for scripts
 #   desk resize WxH           change the desk's resolution live (open apps re-fit; screenshot pixels change)
 #   desk view [N] [control]   look at the desk: optionally go to desktop N first, then open a VNC viewer (view-only unless "control")
+#
+# Displays: every command acts on display 1 (the default, unchanged) unless told otherwise with DESK_DISPLAY=N or
+# `--display N`, which is accepted only as the first argument (before the command) or right after the command name:
+#   desk --display 2 key Return      desk key --display 2 Return      DESK_DISPLAY=2 desk stop
+# Each extra display N has its own runtime files in $DESK_STATE/dN/ (pid, display, dbus, log, apps.log, x11, vnc, ...);
+# bin/, no-libdecor/, screenshots, playwright-out and all work folders stay shared. `desk watch` serves VNC on 5901
+# for display 1 and on 5930+N for the others. Chromium keeps one shared profile, so it can run on one display only.
 set -u
 D=$(dirname "$(readlink -f "$0")")                                    # install dir (rc.xml, playwright.json)
 S=${DESK_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-desk}    # state of the running desk
 PROFILE=${DESK_PROFILE:-$HOME/.local/share/claude-desk-chromium}
 CDP_PORT=${DESK_CDP_PORT:-9222}
-VNC_PORT=${DESK_VNC_PORT:-5901}
+VKEY=${DESK_VKEY:-$D/vkey/vkey}                                        # optional keyboard sender (build: see vkey/vkey.c)
 PW_MCP=${DESK_PLAYWRIGHT_MCP:-@playwright/mcp@0.0.83}
 
 die() { echo "desk: $*" >&2; exit 1; }
+
+# Display selection: DESK_DISPLAY=N, or --display N as the first argument or right after the command name (only there).
+DN=${DESK_DISPLAY:-1}; DISPLAY_GIVEN=0
+if [ "${1:-}" = --display ]; then
+  [ $# -ge 2 ] || die "--display needs a number"; DN=$2; DISPLAY_GIVEN=1; shift 2
+elif [ "${2:-}" = --display ]; then
+  [ $# -ge 3 ] || die "--display needs a number"; DN=$3; DISPLAY_GIVEN=1; set -- "$1" "${@:4}"
+fi
+[[ $DN =~ ^[0-9]+$ ]] && [ "$((10#$DN))" -ge 1 ] || die "display must be an integer >= 1 (got '$DN')"
+DN=$((10#$DN)); export DESK_DISPLAY=$DN      # recursive "$0" calls stay on this display
+# R = runtime dir of this display (pid, display, dbus, log, inner.sh, lock, apps.log, chromium.pid, vnc, win-*, x11)
+if [ "$DN" = 1 ]; then R=$S; else R=$S/d$DN; fi
+if [ "$DN" = 1 ]; then VNC_PORT=${DESK_VNC_PORT:-5901}; else VNC_PORT=$((5930 + DN)); fi
 # path of the first of the given commands that exists, or empty
 find_bin() { local c p; for c in "$@"; do p=$(command -v "$c" 2>/dev/null) && [ -x "$p" ] && { echo "$p"; return; }; done; }
 # req VAR cmd...: set VAR to the resolved path of the first existing cmd, or die naming what to install
@@ -47,17 +73,54 @@ req() { local v=$1; shift; local p; p=$(find_bin "$@"); [ -n "$p" ] || die "need
 case "${1:-}" in doctor|""|-h|--help|help) ;; *) [ -d "${XDG_RUNTIME_DIR:-}" ] || die "XDG_RUNTIME_DIR is not set (log in through a normal user session)" ;; esac
 
 is_desk() { [ "$(cat "/proc/$1/comm" 2>/dev/null)" = dbus-run-sessio ]; }   # comm is cut to 15 chars; guards against a reused pid
-running() { [ -f "$S/pid" ] && is_desk "$(cat "$S/pid")" && [ -f "$S/display" ]; }
+running_in() { [ -f "$1/pid" ] && is_desk "$(cat "$1/pid")" && [ -f "$1/display" ]; }   # is the desk with runtime dir $1 up?
+running() { running_in "$R"; }
 # spawn PIDFILE cmd...: run cmd detached in the desk environment, recording the real pid of cmd
-spawn() { local pf=$1; shift; denv "$SETSID" "$BASHB" -c 'echo $$ > "$1"; shift; exec "$@"' _ "$pf" "$@" >> "$S/apps.log" 2>&1 < /dev/null & }
+spawn() { local pf=$1; shift; denv "$SETSID" "$BASHB" -c 'echo $$ > "$1"; shift; exec "$@"' _ "$pf" "$@" >> "$R/apps.log" 2>&1 < /dev/null & }
 need() { running || die "not running (desk start)"; }
 APP_PATH=/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin
 # Environment for anything that talks to the nested compositor. No DISPLAY: nothing can reach the host's XWayland.
-denv() { env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$(cat "$S/display")" \
-  DBUS_SESSION_BUS_ADDRESS="$(cat "$S/dbus")" PATH="$APP_PATH" LANG="${LANG:-C.UTF-8}" \
-  LIBDECOR_PLUGIN_DIR="$S/no-libdecor" GTK_USE_PORTAL=0 XDG_SESSION_TYPE=wayland "$@"; }
-stop_viewer() { [ -f "$S/viewer.pid" ] && kill "$(cat "$S/viewer.pid")" 2>/dev/null; rm -f "$S/viewer.pid"; }
-stop_vnc() { [ -f "$S/vnc.pid" ] && kill "$(cat "$S/vnc.pid")" 2>/dev/null; rm -f "$S/vnc.pid"; }
+# Exception: X11MODE=1 (desk run --x11) gives the app this desk's own XWayland ($XDISP) and a dead WAYLAND_DISPLAY
+# (unset, libwayland would fall back to wayland-0, the host).
+denv() {
+  if [ "${X11MODE:-0}" = 1 ]; then
+    env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DISPLAY="$XDISP" WAYLAND_DISPLAY=desk-no-wayland \
+      DBUS_SESSION_BUS_ADDRESS="$(cat "$R/dbus")" PATH="$APP_PATH" LANG="${LANG:-C.UTF-8}" \
+      LIBDECOR_PLUGIN_DIR="$S/no-libdecor" GTK_USE_PORTAL=0 XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb SDL_VIDEODRIVER=x11 "$@"
+  else
+    env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$(cat "$R/display")" \
+      DBUS_SESSION_BUS_ADDRESS="$(cat "$R/dbus")" PATH="$APP_PATH" LANG="${LANG:-C.UTF-8}" \
+      LIBDECOR_PLUGIN_DIR="$S/no-libdecor" GTK_USE_PORTAL=0 XDG_SESSION_TYPE=wayland "$@"
+  fi
+}
+# pids of the Xwayland that THIS display's compositor launched (a client of our wayland socket; it is reparented to pid 1)
+xwayland_pids() {
+  local wl p; wl=$(cat "$R/display" 2>/dev/null) || return 0; [ -n "$wl" ] || return 0
+  for p in $(pgrep -x Xwayland 2>/dev/null); do
+    tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qx "WAYLAND_DISPLAY=$wl" || continue
+    tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qx "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" && echo "$p"
+  done
+}
+# X display (":N") of this desk's own XWayland; prints it, or fails. Never ":0" (the host).
+x11_display() {
+  local d p
+  if [ -s "$R/x11" ]; then d=$(cat "$R/x11")
+  else   # desk started by an older script (no x11 file): our labwc itself holds the listening socket of its lazy XWayland
+    local l ins ino path
+    l=$(pgrep -P "$(cat "$R/pid" 2>/dev/null)" -x labwc 2>/dev/null | head -1)
+    if [ -n "$l" ]; then
+      ins=" $(for p in /proc/$l/fd/*; do readlink "$p"; done 2>/dev/null | sed -n 's/^socket:\[\([0-9]*\)\]$/\1/p' | tr '\n' ' ')"
+      while read -r _ _ _ _ _ _ ino path; do
+        case $path in /tmp/.X11-unix/X[0-9]*) case $ins in *" $ino "*) d=":${path##*/X}"; break ;; esac ;; esac
+      done < /proc/net/unix
+    fi
+  fi
+  [[ ${d:-} =~ ^:[0-9]+$ ]] && [ "$d" != :0 ] || { echo "desk: no XWayland known for display $DN (no $R/x11 and its labwc holds no X socket); restart this desk to get one" >&2; return 1; }
+  echo "$d"
+}
+stop_viewer() { [ -f "$R/viewer.pid" ] && kill "$(cat "$R/viewer.pid")" 2>/dev/null; rm -f "$R/viewer.pid"; }
+stop_vnc() { [ -f "$R/vnc.pid" ] && kill "$(cat "$R/vnc.pid")" 2>/dev/null; rm -f "$R/vnc.pid"; }
+usage() { sed -n '2,${/^#/!q;s/^# \{0,1\}//p}' "$0"; }     # the leading comment block of this file
 find_chromium() { find_bin "${DESK_CHROMIUM:-chromium}" chromium chromium-browser google-chrome-stable google-chrome brave-browser brave; }
 
 case "${1:-}" in
@@ -67,6 +130,7 @@ doctor)
   opt() { local p; p=$(find_bin "$@"); if [ -n "$p" ]; then echo "ok       $1 -> $p (optional)"; else echo "absent   $1 (optional)"; fi; }
   chk labwc; chk wlr-randr; chk wtype; chk grim; chk wlrctl; chk dbus-run-session; chk dbus-daemon; chk setsid; chk timeout; chk curl; chk pgrep; chk pkill; chk seq; chk readlink
   p=$(find_chromium); if [ -n "$p" ]; then echo "ok       chromium -> $p"; else echo "MISSING  chromium (or set DESK_CHROMIUM)"; bad=1; fi
+  if [ -x "${DESK_VKEY:-$D/vkey/vkey}" ]; then echo "ok       vkey -> ${DESK_VKEY:-$D/vkey/vkey} (optional)"; else echo "absent   vkey (optional; keys/typing reach XWayland apps; build: cd $D/vkey && cc -O2 -o vkey vkey.c vk.c -lwayland-client -lxkbcommon)"; fi
   opt foot; opt wayvnc; opt vncviewer; opt node; opt npx; opt flock
   exit $bad ;;
 start)
@@ -75,21 +139,22 @@ start)
   FLOCK=$(find_bin flock)
   SIZE=${2:-1600x900}; [[ $SIZE =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]] || die "size must look like 1600x900"
   case $S in *\ *) die "state path must not contain spaces (set DESK_STATE)";; esac
-  mkdir -p "$S/bin" "$S/no-libdecor"
-  if [ -n "$FLOCK" ]; then exec 9>"$S/lock"; "$FLOCK" -w 20 9 || die "another desk start is stuck (lock $S/lock)"; fi     # two starts at once: the second waits, then sees it running
-  running && { echo "already running on $(cat "$S/display")"; exit 0; }
+  mkdir -p "$S/bin" "$S/no-libdecor" "$R"
+  if [ -n "$FLOCK" ]; then exec 9>"$R/lock"; "$FLOCK" -w 20 9 || die "another desk start is stuck (lock $R/lock)"; fi     # two starts at once: the second waits, then sees it running
+  running && { echo "already running on $(cat "$R/display")"; exit 0; }
   # labwc runs with only these tools on its PATH, so it cannot reach systemctl or dbus-update-activation-environment
   for t in "$BASH" "$CATB" "$DBUSD" "$ENVB" "$SHB" "$SLEEP"; do ln -sf "$t" "$S/bin/$(basename "$t")"; done
-  rm -f "$S"/pid "$S"/display "$S"/display.tmp "$S"/dbus; : > "$S/log"
+  rm -f "$R"/pid "$R"/display "$R"/display.tmp "$R"/dbus "$R"/x11; : > "$R/log"
   {
     echo '#!/usr/bin/env bash'
-    printf 'echo "$WAYLAND_DISPLAY" > %q\n' "$S/display.tmp"
-    printf 'echo "$DBUS_SESSION_BUS_ADDRESS" > %q\n' "$S/dbus"
-    printf '%q --output "$(%q | %q -1 | %q -d" " -f1)" --custom-mode %q >> %q 2>&1\n' "$WLRRANDR" "$WLRRANDR" "$HEAD" "$CUT" "$SIZE" "$S/log"
-    printf '%q %q %q\n' "$MV" "$S/display.tmp" "$S/display"
+    printf 'echo "$WAYLAND_DISPLAY" > %q\n' "$R/display.tmp"
+    printf 'echo "$DBUS_SESSION_BUS_ADDRESS" > %q\n' "$R/dbus"
+    printf '[ -n "${DISPLAY:-}" ] && echo "$DISPLAY" > %q\n' "$R/x11"      # labwc (+xwayland) puts its own lazy XWayland here
+    printf '%q --output "$(%q | %q -1 | %q -d" " -f1)" --custom-mode %q >> %q 2>&1\n' "$WLRRANDR" "$WLRRANDR" "$HEAD" "$CUT" "$SIZE" "$R/log"
+    printf '%q %q %q\n' "$MV" "$R/display.tmp" "$R/display"
     printf 'exec %q infinity\n' "$SLEEP"
-  } > "$S/inner.sh"
-  chmod +x "$S/inner.sh"
+  } > "$R/inner.sh"
+  chmod +x "$R/inner.sh"
   HOST=()
   if [ "${DESK_VISIBLE:-0}" = 1 ]; then
     [ -n "${WAYLAND_DISPLAY:-}" ] || die "DESK_VISIBLE=1 needs a Wayland host session (WAYLAND_DISPLAY is unset)"
@@ -97,45 +162,85 @@ start)
   else BACK=(WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1); fi
   setsid env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" ${HOST[@]+"${HOST[@]}"} PATH="$S/bin" \
     "${BACK[@]}" WLR_LIBINPUT_NO_DEVICES=1 LIBDECOR_PLUGIN_DIR="$S/no-libdecor" GTK_USE_PORTAL=0 \
-    "$DBUSRUN" -- "$LABWC" -C "$D/labwc-config" -s "$S/inner.sh" >> "$S/log" 2>&1 9>&- &
-  echo $! > "$S/pid"
-  for i in $(seq 1 50); do [ -f "$S/display" ] && break; sleep 0.2; done
-  running || die "failed to start, see $S/log"
-  echo "desk up: WAYLAND_DISPLAY=$(cat "$S/display") ${SIZE} pid $(cat "$S/pid")" ;;
+    "$DBUSRUN" -- "$LABWC" -C "$D/labwc-config" -s "$R/inner.sh" >> "$R/log" 2>&1 9>&- 8>&- &
+  echo $! > "$R/pid"
+  for i in $(seq 1 50); do [ -f "$R/display" ] && break; sleep 0.2; done
+  running || die "failed to start, see $R/log"
+  echo "desk up: WAYLAND_DISPLAY=$(cat "$R/display") ${SIZE} pid $(cat "$R/pid")" ;;
 stop)
   stop_viewer; stop_vnc
-  [ -f "$S/pid" ] || { echo "not running"; exit 0; }
-  P=$(cat "$S/pid")
+  [ -f "$R/pid" ] || { echo "not running"; exit 0; }
+  P=$(cat "$R/pid"); XW=$(xwayland_pids)       # this display's XWayland only; look it up before the desk goes
   if is_desk "$P"; then kill -- -"$P" 2>/dev/null; sleep 1; kill -9 -- -"$P" 2>/dev/null; fi
-  rm -f "$S/pid" "$S/display"; echo "desk stopped" ;;
+  for x in $XW; do kill "$x" 2>/dev/null; done
+  rm -f "$R/pid" "$R/display"; echo "desk stopped" ;;
 status)
-  if running; then echo "running: WAYLAND_DISPLAY=$(cat "$S/display") pid $(cat "$S/pid")"; else echo "stopped"; fi ;;
+  if running; then echo "running: WAYLAND_DISPLAY=$(cat "$R/display") pid $(cat "$R/pid")"; else echo "stopped"; fi ;;
+displays)
+  # display 1 lives in $S itself, the others in $S/dN/
+  for d in "$S" $(ls -d "$S"/d[0-9]* 2>/dev/null | sort -V); do
+    if [ "$d" = "$S" ]; then n=1; else n=${d##*/d}; [[ $n =~ ^[0-9]+$ ]] && [ "$n" -ge 2 ] || continue; fi
+    if running_in "$d"; then st=running; else st=stopped; fi
+    wl=-; xd=-; pd=-
+    [ "$st" = running ] && { wl=$(cat "$d/display"); pd=$(cat "$d/pid"); }
+    [ "$st" = running ] && [ -s "$d/x11" ] && xd=$(cat "$d/x11")
+    echo "display $n: $st WAYLAND_DISPLAY=$wl X11=$xd pid=$pd"
+  done ;;
 run)
-  need; shift; [ $# -gt 0 ] || die "run what?"; req SETSID setsid; req BASHB bash
-  spawn "$S/last-run.pid" "$@"; sleep 0.2
-  echo "started pid $(cat "$S/last-run.pid" 2>/dev/null) (log $S/apps.log)" ;;
+  shift; OWN=0; X11=${DESK_X11:-0}
+  while [ $# -gt 0 ]; do case "$1" in --own) OWN=1 ;; --x11) X11=1 ;; --) shift; break ;; *) break ;; esac; shift; done
+  [ $# -gt 0 ] || die "run what?"
+  if [ "$OWN" = 1 ]; then
+    # ONE APP, ONE DISPLAY: claim the first free display >= 2 under a lock, start it, run the app there
+    [ "$DISPLAY_GIVEN" = 0 ] || die "--own picks its own display; drop --display"
+    req FLOCKB flock; mkdir -p "$S"
+    exec 8>"$S/own.lock"; "$FLOCKB" -w 30 8 || die "another 'run --own' is stuck (lock $S/own.lock)"
+    # taken = a live desk process owns the dir (also covers one that is still starting up); stale dirs are reused
+    n=2; while [ -f "$S/d$n/pid" ] && is_desk "$(cat "$S/d$n/pid")"; do n=$((n+1)); done
+    [ "$n" -le 99 ] || die "no free display (2-99)"
+    DESK_DISPLAY=$n "$0" start "${DESK_SIZE:-1600x900}" 8>&- || die "display $n failed to start"
+    RUNARGS=(); [ "$X11" = 1 ] && RUNARGS=(--x11)
+    OUT=$(DESK_DISPLAY=$n "$0" run ${RUNARGS[@]+"${RUNARGS[@]}"} -- "$@" 8>&-) || { echo "$OUT"; die "display $n is up but the app did not start"; }
+    echo "display $n: started pid $(cat "$S/d$n/last-run.pid" 2>/dev/null) (WAYLAND_DISPLAY=$(cat "$S/d$n/display"), log $S/d$n/apps.log)"
+    echo "  drive it with: desk --display $n windows | type | key | click | shot   (stop: desk stop --display $n)"
+    exit 0
+  fi
+  need; req SETSID setsid; req BASHB bash
+  if [ "$X11" = 1 ]; then XDISP=$(x11_display) || exit 1; X11MODE=1; fi
+  spawn "$R/last-run.pid" "$@"; sleep 0.2
+  echo "started pid $(cat "$R/last-run.pid" 2>/dev/null) (log $R/apps.log)" ;;
 chromium)
   need; shift; req SETSID setsid; req CURL curl; req BASHB bash
   CHROME=$(find_chromium); [ -n "$CHROME" ] || die "no Chromium found (install it or set DESK_CHROMIUM)"
   mkdir -p "$PROFILE"
   LOCK=$(readlink "$PROFILE/SingletonLock" 2>/dev/null)
+  if [ -n "$LOCK" ] && kill -0 "${LOCK##*-}" 2>/dev/null && [ "${LOCK##*-}" != "$(cat "$R/chromium.pid" 2>/dev/null)" ]; then
+    # the profile is open, but not by the browser this display started: refuse if another display owns it
+    OWNER=$(cat "$S/chromium.display" 2>/dev/null)
+    if [ -n "$OWNER" ] && [ "$OWNER" != "$DN" ]; then die "chromium already runs on display $OWNER (one shared profile, one browser)"
+    elif [ -z "$OWNER" ] && [ "$DN" != 1 ]; then die "chromium already runs on another display (one shared profile, one browser)"; fi
+  fi
   if [ -n "$LOCK" ] && kill -0 "${LOCK##*-}" 2>/dev/null && "$CURL" -s "127.0.0.1:$CDP_PORT/json/version" >/dev/null; then
     # already running on this profile: open the URL in it instead of launching a second copy
     [ $# -gt 0 ] && "$CURL" -s -X PUT "127.0.0.1:$CDP_PORT/json/new?$1" >/dev/null
     echo "chromium already up, CDP http://127.0.0.1:$CDP_PORT"; exit 0
   fi
-  spawn "$S/chromium.pid" "$CHROME" --ozone-platform=wayland --user-data-dir="$PROFILE" \
+  echo "$DN" > "$S/chromium.display"
+  spawn "$R/chromium.pid" "$CHROME" --ozone-platform=wayland --user-data-dir="$PROFILE" \
     --remote-debugging-address=127.0.0.1 --remote-debugging-port="$CDP_PORT" --password-store=basic \
     --no-first-run --no-default-browser-check --start-maximized "${@:-about:blank}"
   # ready once CDP answers while the browser we just started is still alive (a fixed --remote-debugging-port writes no DevToolsActivePort)
-  up() { kill -0 "$(cat "$S/chromium.pid" 2>/dev/null)" 2>/dev/null && "$CURL" -s "127.0.0.1:$CDP_PORT/json/version" >/dev/null; }
+  up() { kill -0 "$(cat "$R/chromium.pid" 2>/dev/null)" 2>/dev/null && "$CURL" -s "127.0.0.1:$CDP_PORT/json/version" >/dev/null; }
   for i in $(seq 1 75); do up && break; sleep 0.2; done
-  up && echo "chromium up, CDP http://127.0.0.1:$CDP_PORT" || die "chromium CDP not up, see $S/apps.log" ;;
+  up && echo "chromium up, CDP http://127.0.0.1:$CDP_PORT" || die "chromium CDP not up, see $R/apps.log" ;;
 shot)
-  need; req GRIM grim; req TIMEOUT timeout; OUT=${2:-$S/shot-$(date +%H%M%S).png}
+  need; req GRIM grim; req TIMEOUT timeout; OUT=${2:-$S/shot-$(date +%H%M%S)$([ "$DN" = 1 ] || echo "-d$DN").png}
   denv "$TIMEOUT" 10 "$GRIM" "$OUT" && echo "$OUT" || die "grim failed (DESK_VISIBLE desk while its window is hidden?)" ;;
 type)
-  need; req WTYPE wtype; shift; denv "$WTYPE" -s 150 -- "$*" ;;
+  need; shift; T="$*"
+  # vkey (US keymap, works for XWayland apps too) for plain ASCII; wtype for anything else
+  if [ -x "$VKEY" ] && (LC_ALL=C; [[ $T =~ ^[\ -~$'\n'$'\t']*$ ]]); then denv "$VKEY" "t:$T"
+  else req WTYPE wtype; denv "$WTYPE" -s 150 -- "$T"; fi ;;
 ws)
   need; N=${2:?desktop number 1-4}; case "$N" in [1-4]) ;; *) die "desktop must be 1-4" ;; esac
   if [ "${3:-}" = move ]; then "$0" key "$N" logo shift; else "$0" key "$N" logo; fi ;;
@@ -146,10 +251,10 @@ manager)
   case "${1:-}" in
   ""|tui)  # open the manager in its own terminal window (foot by default) on the current session
     TERMCMD=${DESK_TERMINAL:-foot}; req TERMB "$TERMCMD"; req SETSID setsid
-    DESK_STATE=$S DESK_BIN=$0 "$SETSID" "$TERMB" -T "desk manager" -e "$MB" >/dev/null 2>&1 < /dev/null &
+    DESK_STATE=$R DESK_DISPLAY=1 DESK_BIN=$0 "$SETSID" "$TERMB" -T "desk manager" -e "$MB" >/dev/null 2>&1 < /dev/null &
     echo "desk manager opened in $TERMCMD" ;;
-  here) shift; DESK_STATE=$S DESK_BIN=$0 exec "$MB" "$@" ;;      # run in this terminal
-  *) DESK_STATE=$S DESK_BIN=$0 exec "$MB" "$@" ;;                # list, shot, view, ws, resize
+  here) shift; DESK_STATE=$R DESK_DISPLAY=1 DESK_BIN=$0 exec "$MB" "$@" ;;      # run in this terminal
+  *) DESK_STATE=$R DESK_DISPLAY=1 DESK_BIN=$0 exec "$MB" "$@" ;;                # list, shot, view, ws, resize
   esac ;;
 resize)
   need; req WLRRANDR wlr-randr; SZ=${2:?size like 1280x720}; [[ $SZ =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]] || die "size must look like 1600x900"
@@ -161,13 +266,19 @@ view)
   [ "${3:-}" = control ] && MODE_ARG=control
   exec "$0" watch ${MODE_ARG:-} ;;
 reload)
-  need; LPID=$(pgrep -P "$(cat "$S/pid")" -x labwc || pgrep -f "labwc -C $D/labwc-config" | head -1)
+  need; LPID=$(pgrep -P "$(cat "$R/pid")" -x labwc)
   [ -n "$LPID" ] || die "inner labwc not found"; kill -HUP "$LPID" && echo "reloaded labwc pid $LPID" ;;
 key)
-  need; req WTYPE wtype; K=${2:?key}; shift 2; ARGS=(-s 150)
-  for m in "$@"; do ARGS+=(-M "$m"); done; ARGS+=(-k "$K")
-  for m in "$@"; do ARGS+=(-m "$m"); done
-  denv "$WTYPE" "${ARGS[@]}" ;;
+  need; K=${2:?key}; shift 2
+  if [ -x "$VKEY" ]; then   # vkey token: mod+mod+key, with desk's "logo" called "super"
+    TOK=; for m in "$@"; do case "$m" in logo) m=super ;; esac; TOK+="$m+"; done
+    denv "$VKEY" "$TOK$K"
+  else
+    req WTYPE wtype; ARGS=(-s 150)
+    for m in "$@"; do ARGS+=(-M "$m"); done; ARGS+=(-k "$K")
+    for m in "$@"; do ARGS+=(-m "$m"); done
+    denv "$WTYPE" "${ARGS[@]}"
+  fi ;;
 move|click)
   need; req WLRCTL wlrctl; X=${2:?x}; Y=${3:?y}
   # wlrctl moves are relative: park in the top-left corner, then move out.
@@ -184,31 +295,32 @@ watch)
   INPUT=(-d); [ "$MODE" = control ] && INPUT=()
   VNCMODE=view; [ "$MODE" = control ] && VNCMODE=control
   # switching between view-only and control restarts wayvnc
-  if [ -f "$S/vnc.mode" ] && [ "$(cat "$S/vnc.mode")" != "$VNCMODE" ]; then stop_vnc; sleep 0.5; fi
-  echo "$VNCMODE" > "$S/vnc.mode"
-  if ! { [ -f "$S/vnc.pid" ] && kill -0 "$(cat "$S/vnc.pid")" 2>/dev/null; }; then
-    spawn "$S/vnc.pid" "$WAYVNC" ${INPUT[@]+"${INPUT[@]}"} -f 15 127.0.0.1 "$VNC_PORT"; sleep 1.5
-    kill -0 "$(cat "$S/vnc.pid")" 2>/dev/null || die "wayvnc failed, see $S/apps.log"
+  if [ -f "$R/vnc.mode" ] && [ "$(cat "$R/vnc.mode")" != "$VNCMODE" ]; then stop_vnc; sleep 0.5; fi
+  echo "$VNCMODE" > "$R/vnc.mode"
+  if ! { [ -f "$R/vnc.pid" ] && kill -0 "$(cat "$R/vnc.pid")" 2>/dev/null; }; then
+    SOCK=(); [ "$DN" != 1 ] && SOCK=(-S "$XDG_RUNTIME_DIR/desk-wv-d$DN.sock")    # own control socket per display
+    spawn "$R/vnc.pid" "$WAYVNC" ${INPUT[@]+"${INPUT[@]}"} ${SOCK[@]+"${SOCK[@]}"} -f 15 127.0.0.1 "$VNC_PORT"; sleep 1.5
+    kill -0 "$(cat "$R/vnc.pid")" 2>/dev/null || die "wayvnc failed, see $R/apps.log"
   fi
   VIEWER=$(find_bin vncviewer)
   if [ "$MODE" = nowindow ] || [ -z "$VIEWER" ] || [ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
     echo "VNC ($VNCMODE) on 127.0.0.1:$VNC_PORT; no viewer opened (connect one yourself)"
   else
     stop_viewer; VO=(-ViewOnly); [ "$MODE" = control ] && VO=()
-    setsid "$VIEWER" ${VO[@]+"${VO[@]}"} "127.0.0.1::$VNC_PORT" >/dev/null 2>&1 & echo $! > "$S/viewer.pid"
+    setsid "$VIEWER" ${VO[@]+"${VO[@]}"} "127.0.0.1::$VNC_PORT" >/dev/null 2>&1 & echo $! > "$R/viewer.pid"
     echo "watching ($VNCMODE): viewer opened (VNC 127.0.0.1:$VNC_PORT; -ViewOnly is TigerVNC syntax)"
   fi ;;
 watchwin)
   need; req SETSID setsid; req BASHB bash; req WVT wayvnc-toplevel
   WID=${2:?window id (desk-manager list)}; MODE=${3:-view}; case "$MODE" in view|control|nowindow) ;; *) die "watchwin <id> [control|nowindow]" ;; esac
   case "$WID" in *[!0-9a-f]*) die "window id must be hex (desk-manager list)" ;; esac
-  K=$S/win-${WID:0:12}
+  K=$R/win-${WID:0:12}
   if ! { [ -f "$K.pid" ] && kill -0 "$(cat "$K.pid")" 2>/dev/null; }; then
     PORT=; for p in $(seq 5902 5921); do ss -ltn 2>/dev/null | grep -q ":$p " || { PORT=$p; break; }; done
     [ -n "$PORT" ] || die "no free VNC port in 5902-5921"
     INPUT=(-d); [ "$MODE" = control ] && INPUT=()
     spawn "$K.pid" "$WVT" ${INPUT[@]+"${INPUT[@]}"} -f 15 -S "$XDG_RUNTIME_DIR/desk-wv-${WID:0:8}.sock" -T "$WID" 127.0.0.1 "$PORT"; sleep 1.5
-    kill -0 "$(cat "$K.pid")" 2>/dev/null || die "wayvnc-toplevel failed (window gone?), see $S/apps.log"
+    kill -0 "$(cat "$K.pid")" 2>/dev/null || die "wayvnc-toplevel failed (window gone?), see $R/apps.log"
     echo "$PORT" > "$K.port"
   fi
   PORT=$(cat "$K.port"); VIEWER=$(find_bin vncviewer)
@@ -222,9 +334,9 @@ watchwin)
   fi ;;
 unwatchwin)
   W=${2:?window id or all}
-  for f in "$S"/win-*.pid; do
+  for f in "$R"/win-*.pid; do
     [ -e "$f" ] || continue; K=${f%.pid}
-    case "$W" in all) ;; *) case "$K" in "$S/win-${W:0:12}") ;; *) continue ;; esac ;; esac
+    case "$W" in all) ;; *) case "$K" in "$R/win-${W:0:12}") ;; *) continue ;; esac ;; esac
     [ -f "$K.viewer" ] && kill "$(cat "$K.viewer")" 2>/dev/null
     kill "$(cat "$f")" 2>/dev/null; rm -f "$K".pid "$K".port "$K".viewer
   done; echo "stopped" ;;
@@ -238,10 +350,10 @@ mcp)
   # The persistent profile allows one browser; if another session holds it, use an in-memory one.
   LOCK=$(readlink "$PROFILE/SingletonLock" 2>/dev/null)
   if [ -n "$LOCK" ] && kill -0 "${LOCK##*-}" 2>/dev/null; then PROF=(--isolated); else mkdir -p "$PROFILE"; PROF=(--user-data-dir "$PROFILE"); fi
-  exec env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$(cat "$S/display")" \
-    DBUS_SESSION_BUS_ADDRESS="$(cat "$S/dbus")" PATH="$(dirname "$NPX"):$APP_PATH" LANG="${LANG:-C.UTF-8}" XDG_SESSION_TYPE=wayland \
+  exec env -i HOME="$HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$(cat "$R/display")" \
+    DBUS_SESSION_BUS_ADDRESS="$(cat "$R/dbus")" PATH="$(dirname "$NPX"):$APP_PATH" LANG="${LANG:-C.UTF-8}" XDG_SESSION_TYPE=wayland \
     "$NPX" -y "$PW_MCP" --config "$D/playwright.json" --executable-path "$CHROME" \
     --output-dir "$S/playwright-out" "${PROF[@]}" ;;
-""|-h|--help|help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//' ;;
-*) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//' >&2; die "unknown command: $1" ;;
+""|-h|--help|help) usage ;;
+*) usage >&2; die "unknown command: $1" ;;
 esac

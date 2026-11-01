@@ -28,5 +28,8 @@ if command -v cargo >/dev/null; then
     echo "built manager/target/release/desk-manager"
   else echo "manager build failed (optional)"; fi
 else echo "optional desk manager needs cargo (rust) to build; skipping"; fi
+if command -v cc >/dev/null && pkg-config --exists wayland-client xkbcommon 2>/dev/null; then
+  (cd "$here/vkey" && cc -O2 -o vkey vkey.c vk.c -lwayland-client -lxkbcommon) && echo "built vkey/vkey (keys and typing that also reach XWayland apps)" || echo "vkey build failed (optional)"
+else echo "optional vkey (XWayland-safe keys) needs cc, libwayland and libxkbcommon dev files: cd vkey && cc -O2 -o vkey vkey.c vk.c -lwayland-client -lxkbcommon"; fi
 echo; echo "Next: desk start && desk chromium https://example.com && desk shot"
 echo "Claude Code MCP (optional): claude mcp add playwright -s user -- $dest mcp"
