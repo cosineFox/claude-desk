@@ -10,6 +10,9 @@
 #   desk status               running? which nested display?
 #   desk watch [control|nowindow]  view the desk live over VNC (view-only unless "control"); needs wayvnc + a VNC viewer
 #   desk unwatch              close the viewer and wayvnc
+#   desk watchwin <id> [control]  view ONE window by its desk-manager id, whatever is focused or on screen;
+#                             needs wayvnc-toplevel (wayvnc with a working -T); own port 5902+, one per window
+#   desk unwatchwin <id|all>  close that window's viewer and wayvnc
 #   desk run <cmd...>         launch an app inside the desk (detached)
 #   desk chromium [url]       Chromium inside the desk, CDP on 127.0.0.1:9222, own profile
 #   desk shot [out.png]       screenshot of the desk (prints the path)
@@ -195,6 +198,36 @@ watch)
     setsid "$VIEWER" ${VO[@]+"${VO[@]}"} "127.0.0.1::$VNC_PORT" >/dev/null 2>&1 & echo $! > "$S/viewer.pid"
     echo "watching ($VNCMODE): viewer opened (VNC 127.0.0.1:$VNC_PORT; -ViewOnly is TigerVNC syntax)"
   fi ;;
+watchwin)
+  need; req SETSID setsid; req BASHB bash; req WVT wayvnc-toplevel
+  WID=${2:?window id (desk-manager list)}; MODE=${3:-view}; case "$MODE" in view|control|nowindow) ;; *) die "watchwin <id> [control|nowindow]" ;; esac
+  case "$WID" in *[!0-9a-f]*) die "window id must be hex (desk-manager list)" ;; esac
+  K=$S/win-${WID:0:12}
+  if ! { [ -f "$K.pid" ] && kill -0 "$(cat "$K.pid")" 2>/dev/null; }; then
+    PORT=; for p in $(seq 5902 5921); do ss -ltn 2>/dev/null | grep -q ":$p " || { PORT=$p; break; }; done
+    [ -n "$PORT" ] || die "no free VNC port in 5902-5921"
+    INPUT=(-d); [ "$MODE" = control ] && INPUT=()
+    spawn "$K.pid" "$WVT" ${INPUT[@]+"${INPUT[@]}"} -f 15 -S "$XDG_RUNTIME_DIR/desk-wv-${WID:0:8}.sock" -T "$WID" 127.0.0.1 "$PORT"; sleep 1.5
+    kill -0 "$(cat "$K.pid")" 2>/dev/null || die "wayvnc-toplevel failed (window gone?), see $S/apps.log"
+    echo "$PORT" > "$K.port"
+  fi
+  PORT=$(cat "$K.port"); VIEWER=$(find_bin vncviewer)
+  if [ "$MODE" = nowindow ] || [ -z "$VIEWER" ] || [ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+    echo "window $WID on VNC 127.0.0.1:$PORT; no viewer opened"
+  else
+    [ -f "$K.viewer" ] && kill "$(cat "$K.viewer")" 2>/dev/null
+    VO=(-ViewOnly); [ "$MODE" = control ] && VO=()
+    setsid "$VIEWER" ${VO[@]+"${VO[@]}"} "127.0.0.1::$PORT" >/dev/null 2>&1 & echo $! > "$K.viewer"
+    echo "window $WID: viewer opened (VNC 127.0.0.1:$PORT)"
+  fi ;;
+unwatchwin)
+  W=${2:?window id or all}
+  for f in "$S"/win-*.pid; do
+    [ -e "$f" ] || continue; K=${f%.pid}
+    case "$W" in all) ;; *) case "$K" in "$S/win-${W:0:12}") ;; *) continue ;; esac ;; esac
+    [ -f "$K.viewer" ] && kill "$(cat "$K.viewer")" 2>/dev/null
+    kill "$(cat "$f")" 2>/dev/null; rm -f "$K".pid "$K".port "$K".viewer
+  done; echo "stopped" ;;
 unwatch)
   stop_viewer; stop_vnc; echo "stopped watching" ;;
 mcp)

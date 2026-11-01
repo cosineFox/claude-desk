@@ -1,0 +1,33 @@
+# wayvnc 0.10.2 with one fix: -T/--toplevel set the capture source to OUTPUT instead of TOPLEVEL,
+# so every -T value failed with "No such output". Upstream master still has the bug (checked 2026-11-01).
+pkgname=wayvnc-toplevel
+_pkgname=wayvnc
+pkgver=0.10.2
+pkgrel=1
+pkgdesc='wayvnc with working -T/--toplevel single-window capture'
+arch=(x86_64)
+url='https://github.com/any1/wayvnc'
+license=(ISC)
+depends=(glibc jansson libdrm mesa wayland libxkbcommon pixman neatvnc)
+makedepends=(meson)
+provides=("wayvnc=$pkgver")
+conflicts=(wayvnc)
+source=("$_pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz"
+        toplevel-source-type.patch)
+sha256sums=('a85c6556a249b631551213f1e0fc20861458aea381996fd30a11fea431a465f9'
+            'SKIP')
+
+prepare() {
+  cd "$_pkgname-$pkgver"
+  patch -Np1 -i ../toplevel-source-type.patch
+}
+
+build() {
+  arch-meson "$_pkgname-$pkgver" build -Dman-pages=disabled -Dtests=false
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 "$_pkgname-$pkgver/COPYING" -t "$pkgdir/usr/share/licenses/$pkgname"
+}
