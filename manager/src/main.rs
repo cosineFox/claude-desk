@@ -53,6 +53,24 @@ fn state_dir() -> PathBuf {
     base.join("claude-desk")
 }
 
+/// Running displays as (number, state dir): display 1 lives in the base dir, display N in base/dN.
+fn displays() -> Vec<(u32, PathBuf)> {
+    let cur = state_dir();
+    let base = match cur.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_prefix('d')).and_then(|n| n.parse::<u32>().ok()) {
+        Some(_) => cur.parent().map(PathBuf::from).unwrap_or(cur),
+        None => cur,
+    };
+    let mut v: Vec<(u32, PathBuf)> = vec![(1, base.clone())];
+    if let Ok(rd) = std::fs::read_dir(&base) {
+        for e in rd.flatten() {
+            if let Some(n) = e.file_name().to_str().and_then(|n| n.strip_prefix('d')).and_then(|n| n.parse::<u32>().ok()) { v.push((n, e.path())); }
+        }
+    }
+    v.retain(|(_, d)| d.join("display").exists());
+    v.sort();
+    v
+}
+
 fn desk_display() -> Result<String, String> {
     std::fs::read_to_string(state_dir().join("display")).map(|s| s.trim().to_string())
         .map_err(|_| "desk is not running (desk start)".into())
@@ -209,7 +227,8 @@ fn term_size() -> (usize, usize, usize, usize) {
 fn clip(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 
 fn tui() -> Result<(), String> {
-    let display = desk_display()?;
+    let mut display = desk_display()?;
+    let mut dn: u32 = std::env::var("DESK_DISPLAY").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let stdin = std::io::stdin();
     let orig = rustix::termios::tcgetattr(&stdin).map_err(|e| e.to_string())?;
     let mut raw = orig.clone();
@@ -245,7 +264,7 @@ fn tui() -> Result<(), String> {
         let split = (rows / 2).max(6); // rows 2..split-1: preview; split..: list
         if dirty {
             let mut s = String::from("\x1b[2J\x1b[H");
-            s.push_str(&format!("\x1b[1m desk manager\x1b[0m  {} window(s)  \x1b[2m[{}]\x1b[0m", wins.len(), if whole { "whole desk" } else { "selected window" }));
+            s.push_str(&format!("\x1b[1m desk manager\x1b[0m  display {}  {} window(s)  \x1b[2m[{}]\x1b[0m", dn, wins.len(), if whole { "whole desk" } else { "selected window" }));
             s.push_str(&format!("\x1b[{};1H\x1b[2m{}\x1b[0m", split, "\u{2500}".repeat(cols)));
             s.push_str(&format!("\x1b[{};1H\x1b[1m windows\x1b[0m", split + 1));
             for (i, w) in wins.iter().enumerate().take(rows.saturating_sub(split + 4)) {
@@ -254,7 +273,7 @@ fn tui() -> Result<(), String> {
                 if i == sel { s.push_str(&format!("\x1b[7m {:>2} {:<w$}\x1b[0m", i + 1, line, w = cols.saturating_sub(5))); }
                 else { s.push_str(&format!(" {:>2} {}", i + 1, line)); }
             }
-            s.push_str(&format!("\x1b[{};1H\x1b[2m j/k select  enter view (VNC)  c control  x close view  tab window/desk  1-4 desktop  r resize  s save  q quit\x1b[0m", rows - 1));
+            s.push_str(&format!("\x1b[{};1H\x1b[2m j/k select  enter view (VNC)  c control  x close view  tab window/desk  d display  1-4 desktop  r resize  s save  q quit\x1b[0m", rows - 1));
             if let Some(i) = &input { s.push_str(&format!("\x1b[{};1H resize WxH: {}_", rows, i)); } else { s.push_str(&format!("\x1b[{};1H {}", rows, clip(&msg, cols - 2))); }
             let _ = out.write_all(s.as_bytes()); let _ = out.flush();
             dirty = false; prev_id.clear();
@@ -301,6 +320,16 @@ fn tui() -> Result<(), String> {
                     b'\r' | b'v' | b'c' => if let Some(w) = wins.get(sel) {
                         msg = view_window(&display, w, key == b'c').unwrap_or_else(|e| e); dirty = true;
                     },
+                    b'd' => {
+                        let ds = displays();
+                        if let Some(i) = ds.iter().position(|(n, _)| *n == dn) {
+                            let (n, dir) = &ds[(i + 1) % ds.len()];
+                            std::env::set_var("DESK_STATE", dir); std::env::set_var("DESK_DISPLAY", n.to_string());
+                            dn = *n; display = desk_display().unwrap_or(display);
+                            wins.clear(); sel = 0; last_list = Instant::now() - Duration::from_secs(9); msg = format!("display {n}");
+                        }
+                        dirty = true;
+                    }
                     b'\t' => { whole = !whole; dirty = true; }
                     b'r' => { input = Some(String::new()); dirty = true; }
                     b's' => if let Some(id) = &cur {

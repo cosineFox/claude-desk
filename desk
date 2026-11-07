@@ -251,10 +251,10 @@ manager)
   case "${1:-}" in
   ""|tui)  # open the manager in its own terminal window (foot by default) on the current session
     TERMCMD=${DESK_TERMINAL:-foot}; req TERMB "$TERMCMD"; req SETSID setsid
-    DESK_STATE=$R DESK_DISPLAY=1 DESK_BIN=$0 "$SETSID" "$TERMB" -T "desk manager" -e "$MB" >/dev/null 2>&1 < /dev/null &
+    DESK_STATE=$R DESK_DISPLAY=$DN DESK_BIN=$0 "$SETSID" "$TERMB" -T "desk manager d$DN" -e "$MB" >/dev/null 2>&1 < /dev/null &
     echo "desk manager opened in $TERMCMD" ;;
-  here) shift; DESK_STATE=$R DESK_DISPLAY=1 DESK_BIN=$0 exec "$MB" "$@" ;;      # run in this terminal
-  *) DESK_STATE=$R DESK_DISPLAY=1 DESK_BIN=$0 exec "$MB" "$@" ;;                # list, shot, view, ws, resize
+  here) shift; DESK_STATE=$R DESK_DISPLAY=$DN DESK_BIN=$0 exec "$MB" "$@" ;;      # run in this terminal
+  *) DESK_STATE=$R DESK_DISPLAY=$DN DESK_BIN=$0 exec "$MB" "$@" ;;                # list, shot, view, ws, resize
   esac ;;
 resize)
   need; req WLRRANDR wlr-randr; SZ=${2:?size like 1280x720}; [[ $SZ =~ ^[0-9]{3,5}x[0-9]{3,5}$ ]] || die "size must look like 1600x900"
